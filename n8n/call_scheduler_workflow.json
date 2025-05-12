@@ -1,0 +1,159 @@
+{
+  "name": "AI Research Assistant - Call Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "interval": 1
+            }
+          ]
+        }
+      },
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pl.id, pl.phone_number, pl.name, q.id as question_id, q.question_text\nFROM phone_list pl\nCROSS JOIN (\n    SELECT id, question_text FROM questions\n    WHERE is_follow_up = false\n    ORDER BY created_at DESC\n    LIMIT 1\n) q\nWHERE NOT EXISTS (\n    SELECT 1 FROM responses r\n    WHERE r.phone_list_id = pl.id\n    AND r.question_id = q.id\n);"
+      },
+      "name": "Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        470,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "each-item",
+        "jsCode": "// Each item contains phone_list entry + latest question\nreturn items.map(item => {\n  return {\n    json: {\n      phoneNumber: item.json.phone_number,\n      name: item.json.name,\n      phoneListId: item.json.id,\n      questionId: item.json.question_id,\n      questionText: item.json.question_text\n    }\n  };\n});"
+      },
+      "name": "Format Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        690,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "call",
+        "operation": "create",
+        "from": "={{ $env.TWILIO_PHONE_NUMBER }}",
+        "to": "={{ $json.phoneNumber }}",
+        "twiml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Say>Hello {{ $json.name }}. {{ $json.questionText }}</Say>\n  <Record \n    action=\"{{ $env.VERCEL_URL }}/api/twilio/transcription?phoneListId={{ $json.phoneListId }}&questionId={{ $json.questionId }}\" \n    method=\"POST\"\n    maxLength=\"30\"\n    playBeep=\"true\"\n    trim=\"trim-silence\"\n  />\n</Response>"
+      },
+      "name": "Twilio",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        910,
+        300
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-credentials",
+          "name": "Twilio Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "callSid",
+              "value": "={{ $json.sid }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "name": "phoneListId",
+              "value": "={{ $json.phoneListId }}"
+            },
+            {
+              "name": "questionId",
+              "value": "={{ $json.questionId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Log Call Details",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1130,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase": {
+      "main": [
+        [
+          {
+            "node": "Format Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data": {
+      "main": [
+        [
+          {
+            "node": "Twilio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twilio": {
+      "main": [
+        [
+          {
+            "node": "Log Call Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+} 
